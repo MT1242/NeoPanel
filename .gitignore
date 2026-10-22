@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+data/
+backups/
+*.bak
+*.zip
+.env
+*.db
+session_secret

@@ -1,0 +1,463 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon, file_glyph %}
+
+{% block extra_head %}
+<style>
+    .field select {
+        appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8.825a.5.5 0 0 1-.354-.146L2.146 5.18a.5.5 0 0 1 .708-.707L6 7.618l3.146-3.147a.5.5 0 0 1 .708.707L6.354 8.68A.5.5 0 0 1 6 8.825z'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 12px center;
+        padding-right: 36px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="page-head">
+    <div class="page-head-icon">{{ icon('folder' if module == 'files' else 'globe', 22) }}</div>
+    <div>
+        <h1>{{ title }}</h1>
+        <p>{{ description if module != 'files' else 'Quản lý các tệp và thư mục trên server của bạn. Hỗ trợ xem, tải lên, tạo mới, chỉnh sửa và xóa tệp.' }}</p>
+    </div>
+</section>
+
+
+{% if module == 'databases' %}
+<section class="panel">
+    <div class="panel-header"><h2 class="panel-title">phpMyAdmin</h2></div>
+    <div class="panel-body">
+        {% if phpmyadmin_installed %}
+        <a class="button" href="{{ phpmyadmin_url }}" target="_blank" rel="noopener noreferrer">Mở phpMyAdmin</a>
+        <p class="panel-description" style="margin-top:10px">Đăng nhập bằng tài khoản database đã tạo ở đây (không dùng root).</p>
+        {% else %}
+        <p class="panel-description">phpMyAdmin chưa được cài. Chạy trên máy chủ: <code>sudo ops/install-phpmyadmin.sh</code></p>
+        {% endif %}
+    </div>
+</section>
+{% endif %}
+
+{% if edit_file %}
+<section class="panel">
+    <div class="panel-header"><h2 class="panel-title">Sửa tệp: {{ edit_file.path }}</h2></div>
+    <div class="panel-body">
+        <form method="post" action="/modules/files/actions">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="action" value="save_file">
+            <input type="hidden" name="website_id" value="{{ selected_website_id }}">
+            <input type="hidden" name="path" value="{{ edit_file.path }}">
+            <input type="hidden" name="directory" value="{{ edit_file.directory }}">
+            <textarea name="content" rows="28" spellcheck="false" aria-label="Nội dung tệp" style="width:100%;font-family:ui-monospace,Consolas,monospace;font-size:13px;line-height:1.5;padding:12px;border-radius:12px;background:var(--bg);color:inherit;border:1px solid var(--border);box-sizing:border-box">{{ edit_file.content }}</textarea>
+            <div style="display:flex;gap:10px;margin-top:12px">
+                <button class="button" type="submit">Lưu thay đổi</button>
+                <a class="button-secondary" href="/modules/files?website_id={{ selected_website_id }}&path={{ edit_file.directory|urlencode }}">Quay lại</a>
+            </div>
+        </form>
+    </div>
+</section>
+{% elif module == 'files' %}
+{% set folder_name = current_path.split('/')[-1] if current_path else (file_website.domain if file_website else 'document_root') %}
+{% set abs_path = ((file_website.document_root ~ '/' ~ current_path) if file_website and current_path else (file_website.document_root if file_website else '')) %}
+
+<div class="info-cards">
+    <article class="info-card">
+        <div class="info-card-icon">{{ icon('globe') }}</div>
+        <div style="min-width:0;flex:1">
+            <div class="info-kicker">Website</div>
+            <form method="get" action="/modules/files">
+                <select name="website_id" onchange="this.form.submit()" aria-label="Chọn website">
+                    <option value="">-- Chọn website --</option>
+                    {% for website in websites %}
+                    <option value="{{ website.value }}"{% if selected_website_id == website.value %} selected{% endif %}>{{ website.label }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+            {% if file_website %}
+            <span class="status-dot{% if file_website.status != 'active' %} {{ 'warn' if file_website.status == 'pending' else 'muted' }}{% endif %}">
+                {% if file_website.status == 'active' %}Hoạt động{% elif file_website.status == 'pending' %}Chờ xử lý{% elif file_website.status == 'disabled' %}Đã tắt{% else %}{{ file_website.status }}{% endif %}
+            </span>
+            {% endif %}
+        </div>
+    </article>
+    <article class="info-card">
+        <div class="info-card-icon">{{ icon('folder') }}</div>
+        <div style="min-width:0;flex:1">
+            <div class="info-kicker">Thư mục gốc</div>
+            <div class="info-value" title="{{ file_website.document_root if file_website else '' }}">{{ file_website.document_root if file_website else '—' }}</div>
+        </div>
+        {% if file_website %}
+        <button class="copy-btn" type="button" data-copy="{{ file_website.document_root }}" aria-label="Sao chép đường dẫn">{{ icon('copy', 16) }}</button>
+        {% endif %}
+    </article>
+    <article class="info-card">
+        <div class="info-card-icon">{{ icon('disk') }}</div>
+        <div>
+            <div class="info-kicker">Dung lượng sử dụng</div>
+            <div class="info-value">{{ disk_used }} / {{ disk_total }}</div>
+        </div>
+    </article>
+    <article class="info-card">
+        <div class="info-card-icon php">php</div>
+        <div style="min-width:0;flex:1">
+            <div class="info-kicker">PHP Version</div>
+            {% if file_website and can_assign_php and php_versions %}
+            <form method="post" action="/modules/php/actions">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="action" value="assign_php">
+                <input type="hidden" name="website_id" value="{{ selected_website_id }}">
+                <input type="hidden" name="next" value="/modules/files?website_id={{ selected_website_id }}&path={{ current_path }}">
+                <select name="php_version" onchange="this.form.submit()" aria-label="Phiên bản PHP">
+                    {% for version in php_versions %}
+                    <option value="{{ version }}"{% if file_website.php_version == version %} selected{% endif %}>{{ version }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+            {% else %}
+            <div class="info-value">{{ file_website.php_version if file_website else '—' }}</div>
+            {% endif %}
+        </div>
+    </article>
+</div>
+
+
+{% if selected_website_id %}
+<section class="panel" style="margin-bottom:0">
+    <div class="fm-shell">
+        <aside class="fm-tree">
+            <div class="fm-tree-title">Thư mục</div>
+            <a class="tree-item{% if not current_path %} active{% endif %}" href="/modules/files?website_id={{ selected_website_id }}&path=">
+                {{ icon('folder', 16) }}
+                <span>{{ file_website.domain if file_website else 'Gốc' }}</span>
+            </a>
+            {% if current_path %}
+            <a class="tree-item active" href="/modules/files?website_id={{ selected_website_id }}&path={{ current_path|urlencode }}">
+                {{ icon('folder', 16) }}
+                <span>{{ folder_name }}</span>
+            </a>
+            {% endif %}
+            {% for dir in tree_dirs %}
+            <a class="tree-item" href="/modules/files?website_id={{ selected_website_id }}&path={{ dir.path|urlencode }}" style="padding-left:22px">
+                {{ icon('folder', 16) }}
+                <span>{{ dir.name }}</span>
+            </a>
+            {% endfor %}
+        </aside>
+
+        <div class="fm-main" data-file-manager>
+            <div class="fm-toolbar">
+                <div>
+                    <div class="fm-path-title">{{ icon('folder', 18) }} {{ folder_name }}</div>
+                    <div class="fm-path-sub">Thư mục hiện tại: {{ abs_path or '—' }}</div>
+                </div>
+                <div class="fm-actions">
+                    {% if can_upload %}
+                    <button class="button" type="button" data-open-dialog="dlg-upload">{{ icon('upload', 16) }} Tải lên</button>
+                    {% endif %}
+                    {% if can_create_dir %}
+                    <button class="button-secondary" type="button" data-open-dialog="dlg-folder">{{ icon('plus', 16) }} Thư mục mới</button>
+                    {% endif %}
+                    {% if can_create_file %}
+                    <button class="button-secondary" type="button" data-open-dialog="dlg-file">{{ icon('plus', 16) }} Tệp mới</button>
+                    {% endif %}
+                    <button class="button-secondary" type="button" data-open-dialog="dlg-more" aria-label="Thêm thao tác">{{ icon('more') }}</button>
+                </div>
+            </div>
+
+            <form id="bulk-form" method="post" action="/modules/files/actions" class="fm-bulk" data-empty="true" onsubmit="return confirm('Thực hiện thao tác với các mục đã chọn?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="website_id" value="{{ selected_website_id }}">
+                <input type="hidden" name="directory" value="{{ current_path }}">
+                <label><input type="checkbox" data-check-all> Đã chọn <span data-selected-count>0</span> mục</label>
+                <button class="ghost-btn bulk-only" type="submit" name="action" value="bulk_archive">{{ icon('archive', 14) }} Tải xuống</button>
+                <button class="ghost-btn bulk-only danger" type="submit" name="action" value="bulk_delete">{{ icon('trash', 14) }} Xóa</button>
+                <input class="bulk-only" name="zip_name" placeholder="Tên zip" style="width:110px;min-height:30px;border:1px solid var(--border);border-radius:8px;padding:0 8px;background:var(--bg)">
+                <input class="bulk-only" name="dest_dir" placeholder="Thư mục đích" style="width:130px;min-height:30px;border:1px solid var(--border);border-radius:8px;padding:0 8px;background:var(--bg)">
+                <button class="ghost-btn bulk-only" type="submit" name="action" value="bulk_copy">{{ icon('copy', 14) }} Sao chép</button>
+                <button class="ghost-btn bulk-only" type="submit" name="action" value="bulk_move">{{ icon('move', 14) }} Di chuyển</button>
+                <span style="margin-left:auto">
+                    Sắp xếp:
+                    <select data-sort style="border:0;background:transparent;font-weight:600">
+                        <option value="name-asc">Tên (A → Z)</option>
+                        <option value="name-desc">Tên (Z → A)</option>
+                        <option value="date-desc">Mới nhất</option>
+                    </select>
+                </span>
+            </form>
+
+            {% if rows %}
+            <div class="fm-table-wrap">
+                <table data-file-table>
+                    <thead>
+                    <tr>
+                        <th style="width:36px"></th>
+                        {% for column in columns %}<th>{{ column }}</th>{% endfor %}
+                        {% if row_action_enabled %}<th>Thao tác</th>{% endif %}
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for row in rows %}
+                    {% set row_index = loop.index0 %}
+                    {% set fp = row_ids[row_index] %}
+                    {% set kind = file_icons[row_index] if file_icons else 'file' %}
+                    {% set is_dir = row[2] == 'Thư mục' %}
+                    <tr data-name="{{ row[0] }}" data-date="{{ row[3] }}" data-dir="{{ '1' if is_dir else '0' }}">
+                        <td><input type="checkbox" form="bulk-form" name="paths" value="{{ fp }}" aria-label="Chọn {{ row[0] }}"></td>
+                        <td>
+                            <a class="file-name" href="{% if is_dir %}/modules/files?website_id={{ selected_website_id }}&path={{ fp|urlencode }}{% else %}/modules/files/download?website_id={{ selected_website_id }}&path={{ fp|urlencode }}{% endif %}">
+                                {{ file_glyph(kind) }}
+                                <span>{{ row[0] }}</span>
+                            </a>
+                        </td>
+                        <td>{{ row[1] }}</td>
+                        <td>{{ row[2] }}</td>
+                        <td>{{ row[3] }}</td>
+                        {% if row_action_enabled %}
+                        <td>
+                            <div class="row-actions">
+                                {% if not is_dir %}
+                                <a class="icon-btn" href="/modules/files/edit?website_id={{ selected_website_id }}&path={{ fp|urlencode }}" aria-label="Xem">{{ icon('eye', 16) }}</a>
+                                <a class="icon-btn" href="/modules/files/download?website_id={{ selected_website_id }}&path={{ fp|urlencode }}" aria-label="Tải xuống">{{ icon('download', 16) }}</a>
+                                {% endif %}
+                                <details class="row-menu">
+                                    <summary class="icon-btn" aria-label="Thao tác">{{ icon('more', 16) }}</summary>
+                                    <div class="row-menu-body">
+                                        {% if not is_dir %}<a class="button-secondary button-small" href="/modules/files/edit?website_id={{ selected_website_id }}&path={{ fp|urlencode }}">Sửa nội dung</a>{% endif %}
+                                        <form class="inline-form" method="post" action="/modules/files/actions">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="rename_file"><input type="hidden" name="website_id" value="{{ selected_website_id }}"><input type="hidden" name="directory" value="{{ current_path }}"><input type="hidden" name="path" value="{{ fp }}">
+                                            <input name="new_name" placeholder="Tên mới" required><button class="button-secondary button-small" type="submit">Đổi tên</button>
+                                        </form>
+                                        <form class="inline-form" method="post" action="/modules/files/actions">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="move_file"><input type="hidden" name="website_id" value="{{ selected_website_id }}"><input type="hidden" name="directory" value="{{ current_path }}"><input type="hidden" name="path" value="{{ fp }}">
+                                            <input name="dest_dir" placeholder="Di chuyển tới"><button class="button-secondary button-small" type="submit">Di chuyển</button>
+                                        </form>
+                                        <form class="inline-form" method="post" action="/modules/files/actions">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="copy_file"><input type="hidden" name="website_id" value="{{ selected_website_id }}"><input type="hidden" name="directory" value="{{ current_path }}"><input type="hidden" name="path" value="{{ fp }}">
+                                            <input name="dest_dir" placeholder="Sao chép tới"><button class="button-secondary button-small" type="submit">Sao chép</button>
+                                        </form>
+                                        <form class="inline-form" method="post" action="/modules/files/actions">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="archive_file"><input type="hidden" name="website_id" value="{{ selected_website_id }}"><input type="hidden" name="directory" value="{{ current_path }}"><input type="hidden" name="path" value="{{ fp }}">
+                                            <button class="button-secondary button-small" type="submit">Nén zip</button>
+                                        </form>
+                                        {% set fname = row[0]|lower %}
+                                        {% if fname.endswith('.zip') or fname.endswith('.tar.gz') or fname.endswith('.tgz') or fname.endswith('.tar') %}
+                                        <form class="inline-form" method="post" action="/modules/files/actions">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="extract_file"><input type="hidden" name="website_id" value="{{ selected_website_id }}"><input type="hidden" name="directory" value="{{ current_path }}"><input type="hidden" name="path" value="{{ fp }}">
+                                            <input name="extract_dir" placeholder="Giải nén vào"><button class="button-secondary button-small" type="submit">Giải nén</button>
+                                        </form>
+                                        {% endif %}
+                                        <form class="inline-form" method="post" action="/modules/files/actions" onsubmit="return confirm('Xóa {{ row[0] }}{% if is_dir %} và toàn bộ nội dung bên trong{% endif %}?');">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="delete_file"><input type="hidden" name="website_id" value="{{ selected_website_id }}"><input type="hidden" name="directory" value="{{ current_path }}"><input type="hidden" name="path" value="{{ fp }}">
+                                            <input name="confirm_path" placeholder="Nhập {{ fp }}" required>
+                                            <button class="button button-danger button-small" type="submit">Xóa</button>
+                                        </form>
+                                    </div>
+                                </details>
+                            </div>
+                        </td>
+                        {% endif %}
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="fm-foot">
+                <div data-page-info>Hiển thị 1 - {{ rows|length }} trong {{ rows|length }} mục</div>
+                <div class="pager" data-pager></div>
+            </div>
+            {% else %}
+            <div class="empty">Thư mục này chưa có tệp.</div>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<dialog class="np-dialog" id="dlg-upload">
+    <form class="dialog-body" method="post" action="/modules/files/actions" enctype="multipart/form-data">
+        <h3>Tải tệp lên</h3>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="upload_file"><input type="hidden" name="website_id" value="{{ selected_website_id }}"><input type="hidden" name="directory" value="{{ current_path }}">
+        <input type="file" name="file" multiple required>
+        <p class="field-help">Mỗi tệp tối đa 100 MB.</p>
+        <div class="dialog-actions">
+            <button class="button-secondary" type="button" data-close-dialog>Hủy</button>
+            <button class="button" type="submit">Tải lên</button>
+        </div>
+    </form>
+</dialog>
+<dialog class="np-dialog" id="dlg-folder">
+    <form class="dialog-body" method="post" action="/modules/files/actions">
+        <h3>Thư mục mới</h3>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="create_directory"><input type="hidden" name="website_id" value="{{ selected_website_id }}"><input type="hidden" name="directory" value="{{ current_path }}">
+        <div class="field"><label for="new-dir">Tên thư mục</label><input id="new-dir" name="name" required></div>
+        <div class="dialog-actions">
+            <button class="button-secondary" type="button" data-close-dialog>Hủy</button>
+            <button class="button" type="submit">Tạo</button>
+        </div>
+    </form>
+</dialog>
+<dialog class="np-dialog" id="dlg-file">
+    <form class="dialog-body" method="post" action="/modules/files/actions">
+        <h3>Tệp mới</h3>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="create_file"><input type="hidden" name="website_id" value="{{ selected_website_id }}"><input type="hidden" name="directory" value="{{ current_path }}">
+        <div class="field"><label for="new-file">Tên tệp</label><input id="new-file" name="name" placeholder="index.php" required></div>
+        <div class="dialog-actions">
+            <button class="button-secondary" type="button" data-close-dialog>Hủy</button>
+            <button class="button" type="submit">Tạo</button>
+        </div>
+    </form>
+</dialog>
+<dialog class="np-dialog" id="dlg-more">
+    <form class="dialog-body" method="post" action="/modules/files/actions">
+        <h3>Thư mục web gốc</h3>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="set_webroot"><input type="hidden" name="website_id" value="{{ selected_website_id }}"><input type="hidden" name="directory" value="{{ current_path }}">
+        <div class="field"><label for="webroot">Thư mục con (vd: public)</label><input id="webroot" name="subdir" value="{{ public_dir }}" placeholder="Để trống nếu PHP thuần"></div>
+        <p class="field-help">Web gốc hiện tại: /{{ public_dir or '' }}</p>
+        <div class="dialog-actions">
+            <button class="button-secondary" type="button" data-close-dialog>Hủy</button>
+            <button class="button" type="submit">Đặt web gốc</button>
+        </div>
+    </form>
+</dialog>
+{% endif %}
+
+{% else %}
+{% for form in forms %}
+{% if form.enabled %}
+<section class="panel">
+    <div class="panel-header"><h2 class="panel-title">{{ form.title }}</h2></div>
+    <div class="panel-body">
+        <form method="post" action="/modules/{{ module }}/actions">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="action" value="{{ form.action }}">
+            <div class="form-grid">
+                {% for field in form.fields %}
+                <div class="field">
+                    <label for="{{ form.action }}-{{ field.name }}">{{ field.label }}</label>
+                    {% if field.type == 'select' %}
+                    <select id="{{ form.action }}-{{ field.name }}" name="{{ field.name }}"{% if field.multiple %} multiple size="4"{% endif %}{% if field.name != 'website_ids' %} required{% endif %}>
+                        <option value="">-- Chọn --</option>
+                        {% for option in field.options %}<option value="{{ option.value }}">{{ option.label }}</option>{% endfor %}
+                    </select>
+                    {% else %}
+                    <input id="{{ form.action }}-{{ field.name }}" name="{{ field.name }}" type="{{ field.type or 'text' }}" value="{{ field.value or '' }}" placeholder="{{ field.placeholder or '' }}"{% if field.type == 'number' %} min="1" max="100"{% endif %} required>
+                    {% endif %}
+                </div>
+                {% endfor %}
+                <button class="button" type="submit">{{ form.button }}</button>
+            </div>
+        </form>
+    </div>
+</section>
+{% endif %}
+{% endfor %}
+
+{% if module == 'php' and php_versions %}
+<section class="panel" id="php-config">
+    <div class="panel-header"><h2 class="panel-title">Sửa file cấu hình PHP</h2></div>
+    <div class="panel-body">
+        <p class="panel-description">Sửa <code>php.ini</code>, <code>php-fpm.conf</code> hoặc file <code>.ini</code> bổ sung của từng phiên bản. Pool website do NeoPanel tạo không sửa ở đây. Sau khi lưu, PHP-FPM sẽ được nạp lại.</p>
+        <form method="get" action="/modules/php">
+            <div class="form-grid">
+                <div class="field">
+                    <label for="php-config-version">Phiên bản PHP</label>
+                    <select id="php-config-version" name="version" onchange="this.form.submit()" aria-label="Phiên bản PHP">
+                        <option value="">-- Chọn --</option>
+                        {% for version in php_versions %}
+                        <option value="{{ version }}"{% if version == selected_php_version %} selected{% endif %}>PHP {{ version }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% if php_config_files %}
+                <div class="field">
+                    <label for="php-config-file">Tệp cấu hình</label>
+                    <select id="php-config-file" name="file" onchange="this.form.submit()" aria-label="Tệp cấu hình PHP">
+                        {% for item in php_config_files %}
+                        <option value="{{ item.path }}"{% if item.path == selected_php_file %} selected{% endif %}>{{ item.label }}{% if not item.exists %} (tạo mới){% endif %}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+            </div>
+        </form>
+        {% if php_edit %}
+        <p class="field-help">Đường dẫn: <code>/etc/php/{{ php_edit.version }}/{{ php_edit.path }}</code>{% if not php_edit.exists %} — tệp tùy chỉnh sẽ được tạo khi lưu.{% endif %}</p>
+        <form method="post" action="/modules/php/actions">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="action" value="save_config">
+            <input type="hidden" name="version" value="{{ php_edit.version }}">
+            <input type="hidden" name="path" value="{{ php_edit.path }}">
+            <textarea name="content" rows="28" spellcheck="false" aria-label="Nội dung php.ini"{% if not can_save_php_config %} readonly{% endif %} style="width:100%;font-family:ui-monospace,Consolas,monospace;font-size:13px;line-height:1.5;padding:12px;border-radius:12px;background:var(--bg);color:inherit;border:1px solid var(--border);box-sizing:border-box">{{ php_edit.content }}</textarea>
+            {% if can_save_php_config %}
+            <div style="display:flex;gap:10px;margin-top:12px">
+                <button class="button" type="submit">Lưu và nạp lại PHP-FPM</button>
+            </div>
+            {% endif %}
+        </form>
+        {% endif %}
+    </div>
+</section>
+{% endif %}
+
+{% if module == 'backups' %}
+<section class="panel">
+    <div class="panel-header"><h2 class="panel-title">Lịch sao lưu</h2></div>
+    {% if schedule_rows %}
+    <div class="table-wrap"><table>
+        <thead><tr><th>Website</th><th>Tần suất</th><th>Lưu giữ (ngày)</th><th>Trạng thái</th><th>Lần chạy kế tiếp</th>{% if can_manage_schedules %}<th>Thao tác</th>{% endif %}</tr></thead>
+        <tbody>{% for row in schedule_rows %}{% set schedule_index = loop.index0 %}<tr>{% for cell in row %}<td>{{ cell }}</td>{% endfor %}
+            {% if can_manage_schedules %}<td><form method="post" action="/modules/backups/actions" onsubmit="return confirm('Thay đổi lịch sao lưu của {{ row[0] }}?');"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="toggle_schedule"><input type="hidden" name="schedule_id" value="{{ schedule_ids[schedule_index] }}"><button class="button button-small" type="submit">{% if row[3] == 'Đang bật' %}Tạm dừng{% else %}Bật lại{% endif %}</button></form></td>{% endif %}
+        </tr>{% endfor %}</tbody>
+    </table></div>
+    {% else %}<div class="empty">Chưa có lịch sao lưu.</div>{% endif %}
+</section>
+{% endif %}
+
+<section class="panel">
+    <div class="panel-header"><h2 class="panel-title">{{ title }}</h2><div class="panel-description">{{ rows|length }} mục</div></div>
+    {% if rows %}
+    <div class="table-wrap"><table>
+        <thead><tr>{% for column in columns %}<th>{{ column }}</th>{% endfor %}{% if row_action_enabled or can_download_backups or module == 'php' %}<th>Thao tác</th>{% endif %}</tr></thead>
+        <tbody>
+        {% for row in rows %}
+        {% set row_index = loop.index0 %}
+        <tr>
+            {% for cell in row %}<td>{{ cell }}</td>{% endfor %}
+            {% if module == 'databases' and row_action_enabled %}
+            <td>{% if row[4] == 'active' %}<form class="inline-form" method="post" action="/modules/databases/actions" onsubmit="return confirm('Xóa database và tài khoản {{ row[0] }}? Thao tác này không thể hoàn tác.');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="delete_database"><input type="hidden" name="database_id" value="{{ row_ids[row_index] }}">
+                <input name="confirm_name" placeholder="Nhập {{ row[0] }}" required><button class="button button-danger button-small" type="submit">Xóa</button>
+            </form>{% else %}<span class="feature-state">Không khả dụng</span>{% endif %}</td>
+            {% elif module == 'dns' and row_action_enabled %}
+            <td><form class="inline-form" method="post" action="/modules/dns/actions" onsubmit="return confirm('Xóa bản ghi {{ row[2] }} {{ row[1] }} của {{ row[0] }}?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="delete_record"><input type="hidden" name="record_id" value="{{ row_ids[row_index] }}">
+                <button class="button button-danger button-small" type="submit">Xóa</button>
+            </form></td>
+            {% elif module == 'users' and row_action_enabled %}
+            <td><form class="inline-form" method="post" action="/modules/users/actions" onsubmit="return confirm('{{ row_actions[row_index].label }} tài khoản {{ row[0] }}?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="toggle_user"><input type="hidden" name="user_id" value="{{ row_ids[row_index] }}"><input type="hidden" name="confirm_username" value="{{ row[0] }}">
+                <button class="button-secondary button-small{% if row_actions[row_index].label == 'Khóa' %} button-danger{% endif %}" type="submit">{{ row_actions[row_index].label }}</button>
+            </form></td>
+            {% elif module == 'backups' and can_download_backups %}
+            <td><a class="button-secondary button-small" href="/modules/backups/download?backup_id={{ row_ids[row_index] }}">Tải xuống</a>
+                {% if row_action_enabled and row_actions[row_index].label == 'Phục hồi' %}
+                <form class="inline-form" method="post" action="/modules/backups/actions" onsubmit="return confirm('Phục hồi bản sao lưu của {{ row[0] }}? Nội dung hiện có có thể bị ghi đè.');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="restore_backup"><input type="hidden" name="backup_id" value="{{ row_ids[row_index] }}"><input name="confirm_name" placeholder="Nhập {{ row[0] }}" required><button class="button button-danger button-small" type="submit">Phục hồi</button>
+                </form>{% else %}<span class="feature-state">Chưa sẵn sàng</span>{% endif %}
+            </td>
+            {% elif module == 'php' %}
+            <td><a class="button-secondary button-small" href="/modules/php?version={{ row[0]|urlencode }}#php-config">Sửa cấu hình</a></td>
+            {% elif row_actions and row_action_enabled and module == 'domains' %}
+            <td>
+                <form class="inline-form" method="post" action="/modules/domains/actions"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="check_dns"><input type="hidden" name="domain_id" value="{{ row_ids[row_index] }}"><button class="button-secondary button-small" type="submit">Kiểm tra DNS</button></form>
+                {% if row_actions[row_index].can_remove %}
+                <form class="inline-form" method="post" action="/modules/domains/actions" onsubmit="return confirm('Gỡ domain {{ row[0] }} khỏi website?');"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="action" value="remove_domain"><input type="hidden" name="domain_id" value="{{ row_ids[row_index] }}"><input name="confirm_domain" placeholder="Nhập domain" required><button class="button button-danger button-small" type="submit">Gỡ</button></form>
+                {% endif %}
+            </td>
+            {% endif %}
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table></div>
+    {% else %}<div class="empty">Chưa có dữ liệu để hiển thị.</div>{% endif %}
+</section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% from "macros.html" import icon %}
+
+{% block crumbs %}
+<span>Tổng quan</span>
+{% endblock %}
+
+{% block content %}
+<section class="page-head">
+    <div class="page-head-icon">{{ icon('home', 22) }}</div>
+    <div>
+        <h1>Tổng quan hệ thống</h1>
+        <p>Quản lý website, dịch vụ hosting và tình trạng máy chủ.</p>
+    </div>
+</section>
+
+<section class="stats" aria-label="Thống kê">
+    <article class="stat-card">
+        <div class="stat-top"><span class="stat-label">Tổng số website</span><span class="stat-icon">{{ icon('globe', 16) }}</span></div>
+        <div class="stat-number">{{ website_count }}</div>
+        <div class="stat-note">Website đã đăng ký trong NeoPanel</div>
+    </article>
+    <article class="stat-card">
+        <div class="stat-top"><span class="stat-label">Đang hoạt động</span><span class="stat-icon stat-icon-success">✓</span></div>
+        <div class="stat-number">{{ websites | selectattr('status', 'equalto', 'active') | list | length }}</div>
+        <div class="stat-note">Theo trạng thái đã lưu trong NeoPanel</div>
+    </article>
+    <article class="stat-card">
+        <div class="stat-top"><span class="stat-label">Chờ cấu hình</span><span class="stat-icon stat-icon-warning">!</span></div>
+        <div class="stat-number">{{ websites | selectattr('status', 'equalto', 'pending') | list | length }}</div>
+        <div class="stat-note">Bản ghi đã lưu, chưa tự triển khai hosting</div>
+    </article>
+    <article class="stat-card">
+        <div class="stat-top"><span class="stat-label">Đã tắt</span><span class="stat-icon">Ⅱ</span></div>
+        <div class="stat-number">{{ websites | selectattr('status', 'equalto', 'disabled') | list | length }}</div>
+        <div class="stat-note">Website có trạng thái disabled</div>
+    </article>
+    <article class="stat-card">
+        <div class="stat-top"><span class="stat-label">Thất bại</span><span class="stat-icon stat-icon-danger">!</span></div>
+        <div class="stat-number">{{ websites | selectattr('status', 'equalto', 'failed') | list | length }}</div>
+        <div class="stat-note">Cần xem nhật ký tác vụ để chẩn đoán</div>
+    </article>
+</section>
+
+<section class="metrics-grid" aria-label="Tài nguyên máy chủ">
+    {% for metric in server_metrics %}
+    <article class="metric-card">
+        <div class="metric-label">{{ metric.label }}</div>
+        <div class="metric-value">{{ metric.value }}</div>
+    </article>
+    {% else %}
+    <article class="metric-card"><div class="metric-label">Tài nguyên máy chủ</div><div class="metric-value">Không có dữ liệu</div></article>
+    {% endfor %}
+</section>
+
+<section class="panel">
+    <div class="panel-header">
+        <div>
+            <h2 class="panel-title">Các module NeoPanel</h2>
+            <div class="panel-description">Trạng thái dưới đây phản ánh chức năng đã được tích hợp.</div>
+        </div>
+    </div>
+    <div class="panel-body">
+        <div class="feature-grid">
+            <a class="feature-card" href="/#websites"><div class="feature-top"><h3 class="feature-title">Website</h3><span class="feature-state">ĐANG DÙNG</span></div><p class="feature-description">Đăng ký tên miền và xem các bản ghi website đã lưu.</p></a>
+            <a class="feature-card" href="/modules/domains"><div class="feature-top"><h3 class="feature-title">Domain và DNS</h3><span class="feature-state">ĐANG DÙNG</span></div><p class="feature-description">Quản lý domain phụ, bí danh và kiểm tra DNS.</p></a>
+            <a class="feature-card" href="/modules/databases"><div class="feature-top"><h3 class="feature-title">Database</h3><span class="feature-state">ĐANG DÙNG</span></div><p class="feature-description">Tạo database và tài khoản MariaDB với quyền giới hạn.</p></a>
+            <a class="feature-card" href="/modules/php"><div class="feature-top"><h3 class="feature-title">PHP và Nginx</h3><span class="feature-state">ĐANG DÙNG</span></div><p class="feature-description">Cấu hình website, PHP-FPM và dịch vụ web an toàn.</p></a>
+            <a class="feature-card" href="/modules/ssl"><div class="feature-top"><h3 class="feature-title">SSL/TLS</h3><span class="feature-state">ĐANG DÙNG</span></div><p class="feature-description">Cấp, theo dõi và gia hạn chứng chỉ cho domain.</p></a>
+            <a class="feature-card" href="/modules/backups"><div class="feature-top"><h3 class="feature-title">Backup và giám sát</h3><span class="feature-state">ĐANG DÙNG</span></div><p class="feature-description">Sao lưu, phục hồi và theo dõi tài nguyên máy chủ.</p></a>
+        </div>
+    </div>
+</section>
+
+<section class="panel" id="add-website">
+    <div class="panel-header">
+        <div>
+            <h2 class="panel-title">Thêm website mới</h2>
+            <div class="panel-description">NeoPanel xếp tác vụ tạo thư mục và cấu hình Nginx; trạng thái chỉ đổi sau khi tác vụ thành công.</div>
+        </div>
+    </div>
+    <div class="panel-body">
+        <form method="post" action="/websites">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="form-grid">
+                <div class="field">
+                    <label for="domain">Tên miền</label>
+                    <input id="domain" name="domain" type="text" placeholder="example.com" maxlength="253" autocomplete="url" required>
+                    <div class="field-help">Nhập domain dạng example.com. Tên miền cần trỏ DNS về máy chủ.</div>
+                </div>
+                <div class="field">
+                    <label for="php_version">Phiên bản PHP-FPM</label>
+                    <select id="php_version" name="php_version" required>
+                        <option value="">-- Chọn phiên bản đã cài --</option>
+                        {% for version in php_versions %}
+                        <option value="{{ version }}">PHP {{ version }}</option>
+                        {% endfor %}
+                    </select>
+                    {% if not php_versions %}<div class="field-help">Chưa lấy được danh sách phiên bản. Cài PHP-FPM và helper Ubuntu trước.</div>{% endif %}
+                </div>
+                <button class="button" type="submit"{% if not php_versions %} disabled{% endif %}>{{ icon('plus', 16) }} Thêm website</button>
+            </div>
+        </form>
+    </div>
+</section>
+
+<section class="panel" id="websites">
+    <div class="panel-header">
+        <div>
+            <h2 class="panel-title">Danh sách website</h2>
+            <div class="panel-description">Các website đã được đăng ký trong hệ thống.</div>
+        </div>
+    </div>
+    {% if websites %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+            <tr>
+                <th>Website</th>
+                <th>Document root</th>
+                <th>PHP</th>
+                <th>Trạng thái</th>
+                <th>Ngày tạo</th>
+                {% if can_manage_websites or can_delete_websites %}<th>Thao tác</th>{% endif %}
+            </tr>
+            </thead>
+            <tbody>
+            {% for website in websites %}
+            <tr>
+                <td><a class="domain-name" href="/modules/files?website_id={{ website['id'] }}">{{ website['domain'] }}</a></td>
+                <td><span class="path">{{ website['document_root'] }}</span></td>
+                <td>PHP {{ website['php_version'] }}</td>
+                <td>
+                    {% if website['status'] == 'active' %}
+                    <span class="status status-active">Hoạt động</span>
+                    {% elif website['status'] == 'disabled' %}
+                    <span class="status status-disabled">Đã tắt</span>
+                    {% elif website['status'] == 'failed' %}
+                    <span class="status status-disabled">Thất bại</span>
+                    {% else %}
+                    <span class="status status-pending">Chờ triển khai</span>
+                    {% endif %}
+                </td>
+                <td>{{ website['created_at'] | datetime_vi }}</td>
+                {% if can_manage_websites or can_delete_websites %}
+                <td>
+                    {% if can_manage_websites %}
+                    {% if website['status'] in ['active', 'disabled'] %}
+                    <form method="post" action="/websites/{{ website['id'] }}/toggle" onsubmit="return confirm('Cập nhật trạng thái website {{ website['domain'] }}?');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button class="button-secondary button-small" type="submit">{% if website['status'] == 'active' %}Tạm ngừng{% else %}Kích hoạt{% endif %}</button>
+                    </form>
+                    {% elif website['status'] == 'failed' %}
+                    <span class="status status-disabled">Xem nhật ký</span>
+                    {% else %}<span class="status status-pending">Đang xử lý</span>{% endif %}
+                    {% endif %}
+                    {% if can_delete_websites %}
+                    <form class="inline-form" method="post" action="/websites/{{ website['id'] }}/delete" onsubmit="return confirm('Xóa cấu hình NeoPanel cho {{ website['domain'] }}? Tệp website và database sẽ được giữ lại.');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <input name="confirm_domain" placeholder="Nhập {{ website['domain'] }}" required>
+                        <button class="button button-danger button-small" type="submit">Gỡ cấu hình</button>
+                    </form>
+                    {% endif %}
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <h3>Chưa có website nào</h3>
+        <p>Thêm tên miền đầu tiên bằng biểu mẫu phía trên.</p>
+    </div>
+    {% endif %}
+</section>
+{% endblock %}

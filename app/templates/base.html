@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>{% block page_title %}{{ title }}{% endblock %} - NeoPanel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/neopanel.css">
+    <script>
+        (() => {
+            try {
+                const t = localStorage.getItem("neopanel-theme") || "light";
+                document.documentElement.dataset.theme = t;
+            } catch (_) {
+                document.documentElement.dataset.theme = "light";
+            }
+            try {
+                if (localStorage.getItem("neopanel-sidebar") === "collapsed") {
+                    document.documentElement.classList.add("sidebar-collapsed");
+                }
+            } catch (_) { /* ignore */ }
+        })();
+    </script>
+    {% block extra_head %}{% endblock %}
+</head>
+
+<body>
+    {% from "macros.html" import icon %}
+    <div class="app">
+        <aside class="sidebar" id="sidebar">
+            <a class="brand" href="/">
+                <span class="brand-icon">N</span>
+                <span class="brand-text">
+                    <span class="brand-name">NeoPanel</span>
+                    <span class="brand-subtitle">Hosting Control Panel</span>
+                </span>
+            </a>
+            <nav class="sidebar-nav" aria-label="Điều hướng chính">
+                {% for item in nav_shell or [] %}
+                {% if item['kind'] == 'section' %}
+                <div class="nav-section">
+                    <div class="nav-label">{{ item['label'] }}</div>
+                    {% for child in item['children'] %}
+                    <a class="nav-link{% if active_module == child['key'] %} active{% endif %}"
+                        href="{{ child['href'] }}" {% if active_module==child['key'] %} aria-current="page" {% endif %}>
+                        {{ icon(child['icon']) }}
+                        <span class="nav-text">{{ child['label'] }}</span>
+                    </a>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <a class="nav-link{% if active_module == item['key'] %} active{% endif %}" href="{{ item['href'] }}" {%
+                    if active_module==item['key'] %} aria-current="page" {% endif %}>
+                    {{ icon(item['icon']) }}
+                    <span class="nav-text">{{ item['label'] }}</span>
+                </a>
+                {% endif %}
+                {% endfor %}
+            </nav>
+            <div class="sidebar-foot">
+                <div class="sidebar-version">NeoPanel v1.0</div>
+                <div class="sidebar-os"><span class="os-dot" aria-hidden="true"></span>{{ os_label }}</div>
+            </div>
+        </aside>
+
+        <div class="workspace">
+            <header class="topbar">
+                <div class="topbar-left">
+                    <button class="icon-btn" type="button" data-sidebar-toggle aria-label="Thu gọn menu">{{ icon('menu')
+                        }}</button>
+                    <nav class="crumbs" aria-label="Đường dẫn">
+                        {% block crumbs %}
+                        <a href="/">Tổng quan</a>
+                        {% if active_module and active_module != 'overview' %}
+                        <span class="crumb-sep">/</span>
+                        <span>{{ title }}</span>
+                        {% endif %}
+                        {% endblock %}
+                    </nav>
+                </div>
+                <div class="topbar-right">
+                    <label class="search-box">
+                        {{ icon('search', 16) }}
+                        <input id="global-search" type="search" placeholder="Tìm kiếm..." autocomplete="off">
+                        <kbd>Ctrl + K</kbd>
+                    </label>
+                    <button class="icon-btn" type="button" data-theme-toggle aria-label="Đổi giao diện">{{ icon('sun')
+                        }}</button>
+                    <button class="icon-btn" type="button" aria-label="Thông báo">{{ icon('bell') }}</button>
+
+                    <div class="user-menu" data-user-menu>
+                        <button class="user-chip" type="button" data-user-menu-toggle aria-haspopup="menu"
+                            aria-expanded="false">
+                            <span class="user-avatar" aria-hidden="true">{{ (username or 'A')[:1] | upper }}</span>
+                            <span class="user-meta">
+                                <span class="user-hello">Xin chào, <strong>{{ username }}</strong></span>
+                                <span class="user-role">{{ role_label }}</span>
+                            </span>
+                            <svg class="user-caret" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                aria-hidden="true">
+                                <path d="m6 9 6 6 6-6" />
+                            </svg>
+                        </button>
+
+                        <div class="user-dropdown" role="menu" hidden>
+                            <div class="user-dropdown-head">
+                                <strong>{{ username }}</strong>
+                                <span>{{ role_label }}</span>
+                            </div>
+                            <form class="logout-form" method="post" action="/logout">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <button class="user-dropdown-item danger" type="submit" role="menuitem">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                        aria-hidden="true">
+                                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                                        <path d="m16 17 5-5-5-5" />
+                                        <path d="M21 12H9" />
+                                    </svg>
+                                    Đăng xuất
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <main class="content">
+                {% block content %}{% endblock %}
+            </main>
+        </div>
+    </div>
+    <div class="toast-stack" aria-live="polite">
+        {% if error %}
+        <div class="toast toast-error" role="alert" data-toast data-timeout="7000">
+            <span class="toast-icon" aria-hidden="true">!</span>
+            <div class="toast-body">
+                <div class="toast-title">Thao tác thất bại</div>
+                <div class="toast-text">{{ error }}</div>
+                <div class="toast-meta" data-toast-count></div>
+            </div>
+            <button class="toast-close" type="button" aria-label="Đóng thông báo" data-toast-close>&times;</button>
+            <span class="toast-progress" aria-hidden="true"></span>
+        </div>
+        {% endif %}
+        {% if warning %}
+        <div class="toast toast-warning" role="alert" data-toast data-timeout="7000">
+            <span class="toast-icon" aria-hidden="true">!</span>
+            <div class="toast-body">
+                <div class="toast-title">Cần chú ý</div>
+                <div class="toast-text">{{ warning }}</div>
+                <div class="toast-meta" data-toast-count></div>
+            </div>
+            <button class="toast-close" type="button" aria-label="Đóng thông báo" data-toast-close>&times;</button>
+            <span class="toast-progress" aria-hidden="true"></span>
+        </div>
+        {% endif %}
+        {% if success %}
+        <div class="toast toast-success" role="status" data-toast{% if not one_time_secret %} data-timeout="5000" {%
+            endif %}>
+            <span class="toast-icon" aria-hidden="true">&#10003;</span>
+            <div class="toast-body">
+                <div class="toast-title">Thành công</div>
+                <div class="toast-text">{{ success }}</div>
+                {% if one_time_secret %}<div class="toast-secret">Tài khoản: <strong>{{ one_time_secret.username
+                        }}</strong><br>Mật khẩu: <strong>{{ one_time_secret.password }}</strong><br><small>Mật khẩu chỉ
+                        hiện một lần, hãy lưu lại trước khi đóng.</small></div>{% endif %}
+                <div class="toast-meta" data-toast-count></div>
+            </div>
+            <button class="toast-close" type="button" aria-label="Đóng thông báo" data-toast-close>&times;</button>
+            {% if not one_time_secret %}<span class="toast-progress" aria-hidden="true"></span>{% endif %}
+        </div>
+        {% endif %}
+    </div>
+    <script src="/static/js/neopanel.js" defer></script>
+    {% block extra_js %}{% endblock %}
+</body>
+
+</html>
