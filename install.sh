@@ -246,7 +246,7 @@ Group=$SVC_USER
 SupplementaryGroups=www-data
 WorkingDirectory=$APP_DIR
 EnvironmentFile=-/etc/neopanel/neopanel.env
-ExecStart=$APP_DIR/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+ExecStart=$APP_DIR/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
 Restart=on-failure
 RestartSec=3
 UMask=0027

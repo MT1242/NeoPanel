@@ -655,7 +655,9 @@ def collect_metrics():
 def render_module(request: Request, module: str, *, error=None, success=None, one_time_secret=None, edit_file=None, php_edit=None):
     title, description, _ = MODULES[module]
     phpmyadmin_installed = Path("/usr/share/phpmyadmin/index.php").is_file() if module == "databases" else False
-    phpmyadmin_url = f"http://{request.url.hostname}:8081/" if phpmyadmin_installed else None
+    # Use server IP from env instead of request.url.hostname to prevent Host-header injection.
+    _panel_host = os.environ.get("NEOPANEL_PUBLIC_IP", "").strip() or "127.0.0.1"
+    phpmyadmin_url = f"http://{_panel_host}:8081/" if phpmyadmin_installed else None
     data = get_module_data(module, request)
     data["forms"] = [
         {**form, "enabled": has_permission(request, f"{module}.{form['action']}")}
@@ -800,6 +802,21 @@ def action_error(request: Request, module: str, message: str, status_code: int =
     return response
 
 
+def action_is_rate_limited(user_id: int, action: str, limit: int = 3, window_minutes: int = 5) -> bool:
+    """Prevent submitting the same heavy action more than `limit` times per window."""
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS n FROM jobs
+            WHERE requested_by = ?
+              AND kind = ?
+              AND status IN ('queued', 'running')
+            """,
+            (user_id, action),
+        ).fetchone()
+    return row["n"] >= limit
+
+
 @router.post("/modules/{module}/actions")
 async def module_action(module: str, request: Request, background_tasks: BackgroundTasks):
     if module not in MODULES:
@@ -814,6 +831,18 @@ async def module_action(module: str, request: Request, background_tasks: Backgro
         return action_error(request, module, "Bạn không có quyền thực hiện thao tác này.", 403)
     if not valid_csrf(request, str(form.get("csrf_token", ""))):
         return action_error(request, module, "Phiên làm việc không hợp lệ. Hãy tải lại trang.", 403)
+
+    # Rate-limit heavy / destructive actions to prevent job flooding.
+    _heavy_actions = {
+        "certificate_issue", "restore_backup", "create_backup",
+        "create_database_backup", "create_user",
+    }
+    if action in _heavy_actions and action_is_rate_limited(user["id"], action):
+        return action_error(
+            request, module,
+            "Bạn đã gửi quá nhiều yêu cầu cùng loại. Hãy chờ các tác vụ hiện tại hoàn thành.",
+            429,
+        )
 
     try:
         if module == "dns" and action == "add_record":
@@ -1013,6 +1042,14 @@ async def module_action(module: str, request: Request, background_tasks: Backgro
             redirect_path = directory
             message = "Hoàn tất."
 
+            # Mapping of known dangerous magic-byte signatures to block server-side execution.
+            _BLOCKED_MAGIC = {
+                b"\x7fELF": "ELF binary",
+                b"MZ": "PE/Windows executable",
+                b"#!/": "shell script (shebang)",
+                b"#! /": "shell script (shebang)",
+            }
+
             if action == "upload_file":
                 uploads = [item for item in form.getlist("file") if hasattr(item, "read") and item.filename]
                 if not uploads:
@@ -1021,12 +1058,25 @@ async def module_action(module: str, request: Request, background_tasks: Backgro
                     raise ValueError("Mỗi lần chỉ tải tối đa 20 tệp.")
                 for upload in uploads:
                     filename = clean_name(Path(upload.filename).name, "Tên tệp")
-                    content = await upload.read(MAX_UPLOAD_BYTES + 1)
-                    if len(content) > MAX_UPLOAD_BYTES:
+                    file_bytes = await upload.read(MAX_UPLOAD_BYTES + 1)
+                    if len(file_bytes) > MAX_UPLOAD_BYTES:
                         raise ValueError(f"{filename}: kích thước tối đa mỗi tệp là 100 MB.")
+                    # Detect and log actual file type from magic bytes.
+                    magic_head = file_bytes[:8]
+                    for sig, label in _BLOCKED_MAGIC.items():
+                        if magic_head.startswith(sig):
+                            record_event(
+                                request, "upload_blocked",
+                                user_id=user["id"], username=user["username"],
+                                resource_type="file",
+                                resource_id=f"{domain}/{directory}/{filename}",
+                                result="warning",
+                                details={"reason": f"blocked magic bytes: {label}"},
+                            )
+                            raise ValueError(f"{filename}: loại tệp không được phép tải lên ({label}).")
                     relative = Path(directory) / filename
                     clean_rel(str(relative), "Đường dẫn tải lên")
-                    run_operation("file_write", {"domain": domain, "path": str(relative), "content": base64.b64encode(content).decode("ascii")})
+                    run_operation("file_write", {"domain": domain, "path": str(relative), "content": base64.b64encode(file_bytes).decode("ascii")})
                 resource = f"{len(uploads)} tệp"
                 message = f"Đã tải lên {len(uploads)} tệp."
             elif action == "create_directory":
@@ -1440,6 +1490,9 @@ def download_backup(request: Request, backup_id: int):
         return HTMLResponse("Không tìm thấy bản sao lưu.", status_code=404)
     target = Path(backup["file_path"]).resolve()
     backup_root = Path("/var/backups/neopanel").resolve()
+    # Extra guard: filename must not contain path separators (DB tampering defence).
+    if "/" in target.name or "\\" in target.name:
+        return HTMLResponse("Tên tệp sao lưu không hợp lệ.", status_code=400)
     if target.parent != backup_root or not target.is_file():
         return HTMLResponse("Tệp sao lưu không khả dụng.", status_code=404)
     record_event(request, "backup_download", user_id=user["id"], username=user["username"], resource_type="backup", resource_id=backup_id)

@@ -450,15 +450,35 @@ def database_create(data):
         raise OperationError("Tên database user không hợp lệ.")
     if not isinstance(password, str) or not 8 <= len(password) <= 128 or any(not 32 <= ord(c) < 127 for c in password):
         raise OperationError("Mật khẩu database phải dài 8–128 ký tự ASCII hiển thị được.")
-    sql_password = password.replace("\\", "\\\\").replace("'", "''")
+    # Identifiers are validated by IDENTIFIER_RE ([a-z][a-z0-9_]{0,47}) — safe to
+    # backtick-quote. Password is embedded as a hex literal and decoded server-side
+    # by UNHEX(), so no quoting or escaping is needed and injection is impossible.
+    password_hex = password.encode("utf-8").hex().upper()
+    # Wrap in a single batch so partial failures don't leave orphan DB/users.
+    # MariaDB DDL statements cannot use BEGIN/ROLLBACK, but running them as one
+    # atomic stdin batch ensures the process exits non-zero if any statement fails.
     sql = (
         f"CREATE DATABASE `{name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n"
-        f"CREATE USER '{username}'@'localhost' IDENTIFIED BY '{sql_password}';\n"
+        f"CREATE USER '{username}'@'localhost' IDENTIFIED BY UNHEX('{password_hex}');\n"
         f"GRANT ALL PRIVILEGES ON `{name}`.* TO '{username}'@'localhost';\n"
         "FLUSH PRIVILEGES;\n"
     )
-    run(["/usr/bin/mariadb"], input_text=sql)
+    try:
+        run(["/usr/bin/mariadb"], input_text=sql)
+    except OperationError:
+        # Best-effort cleanup: remove partially created objects so the caller can retry.
+        cleanup_sql = (
+            f"DROP DATABASE IF EXISTS `{name}`;\n"
+            f"DROP USER IF EXISTS '{username}'@'localhost';\n"
+            "FLUSH PRIVILEGES;\n"
+        )
+        try:
+            run(["/usr/bin/mariadb"], input_text=cleanup_sql)
+        except OperationError:
+            pass
+        raise
     return {"name": name, "username": username, "host": "localhost"}
+
     
 def database_delete(data):
     name = data.get("name")
@@ -736,14 +756,26 @@ def restore_website(data):
         raise OperationError("Checksum backup không khớp hoặc tệp không tồn tại.")
     root_real = WEB_ROOT.resolve()
     owner_uid, web_gid = site_owner(domain)
+    # ── Tar-bomb protection: scan members before extracting ──────────────────
+    _MAX_RESTORE_FILES = 50_000
+    _MAX_RESTORE_BYTES = 2 * 1024 ** 3  # 2 GB
     with tarfile.open(archive_path, "r:gz") as archive:
         members = archive.getmembers()
+        total_files = 0
+        total_bytes = 0
         for member in members:
             item = Path(member.name)
             if item.is_absolute() or ".." in item.parts or not item.parts or item.parts[0] != domain:
                 raise OperationError("Bản sao lưu chứa đường dẫn ngoài phạm vi website.")
             if not (member.isfile() or member.isdir()):
                 raise OperationError("Bản sao lưu chứa loại tệp không được hỗ trợ.")
+            if member.isfile():
+                total_files += 1
+                total_bytes += member.size
+        if total_files > _MAX_RESTORE_FILES:
+            raise OperationError(f"Bản sao lưu chứa quá nhiều tệp ({total_files} > {_MAX_RESTORE_FILES}).")
+        if total_bytes > _MAX_RESTORE_BYTES:
+            raise OperationError("Bản sao lưu quá lớn sau khi giải nén (tối đa 2 GB).")
         for member in members:
             relative = Path(member.name)
             target = (WEB_ROOT / relative).resolve()
@@ -791,6 +823,9 @@ def file_write(data):
     target.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
     os.chown(target.parent, owner_uid, web_gid)
     os.chmod(target.parent, 0o750)
+    # Reject symlink targets — writing through a symlink could escape the webroot.
+    if target.is_symlink():
+        raise OperationError("Không thể ghi vào symbolic link.")
     target.write_bytes(content)
     os.chown(target, owner_uid, web_gid)
     os.chmod(target, 0o640)
@@ -806,6 +841,8 @@ def file_mkdir(data):
     target = (root / relative).resolve()
     if not target.is_relative_to(root):
         raise OperationError("Thư mục nằm ngoài document root.")
+    if target.exists() and target.is_symlink():
+        raise OperationError("Không thể tạo thư mục tại symbolic link.")
     owner_uid, web_gid = site_owner(domain)
     target.mkdir(mode=0o750, parents=True, exist_ok=False)
     os.chown(target, owner_uid, web_gid)
@@ -847,6 +884,8 @@ def file_rename(data):
     root = (WEB_ROOT / domain).resolve()
     source = (root / source_rel).resolve()
     target = (root / target_rel).resolve()
+    if source.is_symlink() or target.is_symlink():
+        raise OperationError("Không thể đổi tên symbolic link.")
     if not source.is_relative_to(root) or not target.is_relative_to(root) or not source.exists():
         raise OperationError("Nguồn hoặc đích nằm ngoài document root.")
     if target.exists():

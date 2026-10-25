@@ -6,11 +6,12 @@ import os
 import time
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pwdlib import PasswordHash
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.audit import record_event
@@ -30,15 +31,47 @@ if not SECRET_FILE.is_file():
 
 SESSION_SECRET = SECRET_FILE.read_text().strip()
 
-if len(SESSION_SECRET) < 32:
-    raise RuntimeError("Khóa session không hợp lệ.")
+# Require at least 64 hex characters (256-bit entropy) — matches what install.sh
+# generates via: openssl rand -hex 32
+if len(SESSION_SECRET) < 64 or not all(c in "0123456789abcdefABCDEF" for c in SESSION_SECRET):
+    raise RuntimeError(
+        "Khóa session không hợp lệ. Hãy tạo lại bằng: openssl rand -hex 32 > data/session_secret"
+    )
 
 app = FastAPI(
     title="NeoPanel",
     version="0.1.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
-# NeoPanel chỉ truy cập nội bộ qua SSH tunnel trong giai đoạn phát triển.
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Inject security headers on every HTTP response."""
+
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none';"
+        )
+        if os.environ.get("NEOPANEL_COOKIE_SECURE", "0").strip() == "1":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+
+# Middleware stack is LIFO: SecurityHeaders runs outermost.
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET,
@@ -147,16 +180,25 @@ def active_session_user(request: Request):
 def login_is_limited(username: str, request: Request) -> bool:
     ip_address = request.client.host if request.client else ""
     with get_connection() as conn:
-        row = conn.execute(
+        # Block if username has >= 5 failed attempts in 15 minutes.
+        by_user = conn.execute(
             """
             SELECT COUNT(*) AS attempts FROM login_attempts
             WHERE attempted_at >= datetime('now', '-15 minutes')
-              AND succeeded = 0
-              AND (username = ? OR ip_address = ?)
+              AND succeeded = 0 AND username = ?
             """,
-            (username, ip_address),
+            (username,),
         ).fetchone()
-    return row["attempts"] >= 5
+        # Block if IP has >= 20 failed attempts regardless of username.
+        by_ip = conn.execute(
+            """
+            SELECT COUNT(*) AS attempts FROM login_attempts
+            WHERE attempted_at >= datetime('now', '-15 minutes')
+              AND succeeded = 0 AND ip_address = ?
+            """,
+            (ip_address,),
+        ).fetchone()
+    return by_user["attempts"] >= 5 or by_ip["attempts"] >= 20
 
 
 def record_login_attempt(username: str, request: Request, succeeded: bool) -> None:
@@ -289,12 +331,9 @@ def render_dashboard(
 
 
 @app.get("/health")
-def health_check():
-    return {
-        "status": "ok",
-        "app": "NeoPanel",
-        "version": "0.1.0",
-    }
+def health_check(request: Request):
+    # Return minimal response — do not expose app name or version to unauthenticated callers.
+    return {"status": "ok"}
 
 
 @app.get("/login", response_class=HTMLResponse)
