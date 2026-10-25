@@ -48,9 +48,5 @@ def accessible_website_ids(request: Request | None):
     return {row["website_id"] for row in rows}
 
 
-def accessible_website_ids(request: Request):
-    if request.session.get("role") != "website_manager":
-        return None
-    with get_connection() as conn:
-        rows = conn.execute("SELECT website_id FROM user_websites WHERE user_id = ?", (request.session.get("user_id"),)).fetchall()
-    return {row["website_id"] for row in rows}
+
+
