@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Install phpMyAdmin (official release tarball) and expose it through Nginx on a dedicated port.
-# Usage: sudo ops/install-phpmyadmin.sh [port]   (default 8081)
+# Install phpMyAdmin (official release tarball) and expose it at /phpmyadmin/ on the panel port.
+# Usage: sudo ops/install-phpmyadmin.sh
+# Nginx snippet: /etc/nginx/neopanel-locations/phpmyadmin.conf (included by neopanel-panel).
 #
 # Không dùng gói apt `phpmyadmin`: nó phụ thuộc các gói php-* chung, mà với PPA ondrej
 # chúng kéo theo bản PHP mới nhất (vd. 8.4) ngoài các phiên bản đã chọn.
@@ -9,12 +10,6 @@ set -euo pipefail
 if [[ $EUID -ne 0 ]]; then
   echo "Run this installer with sudo." >&2
   exit 1
-fi
-
-port="${1:-8081}"
-if [[ ! $port =~ ^[0-9]{2,5}$ ]] || (( port < 1024 || port > 65535 )); then
-  echo "Usage: sudo $0 [port 1024-65535]" >&2
-  exit 2
 fi
 
 PMA_VERSION="${PMA_VERSION:-5.2.3}"
@@ -88,28 +83,30 @@ chown -R root:www-data "$PMA_DIR"
 find "$PMA_DIR" -type d -exec chmod 0750 {} +
 find "$PMA_DIR" -type f -exec chmod 0640 {} +
 
-cat > /etc/nginx/sites-available/neopanel-phpmyadmin <<CONF
+# Gỡ server block cổng riêng (8081) của các bản cũ
+rm -f /etc/nginx/sites-enabled/neopanel-phpmyadmin /etc/nginx/sites-available/neopanel-phpmyadmin
+
+install -d -m 0755 /etc/nginx/neopanel-locations
+cat > /etc/nginx/neopanel-locations/phpmyadmin.conf <<CONF
 # managed-by-neopanel
-server {
-    listen ${port};
-    listen [::]:${port};
-    server_name _;
-    root ${PMA_DIR};
+location = /phpmyadmin { return 301 \$scheme://\$http_host/phpmyadmin/; }
+location ^~ /phpmyadmin/ {
+    alias ${PMA_DIR}/;
     index index.php;
     client_max_body_size 128m;
 
-    location / { try_files \$uri \$uri/ =404; }
+    location ~ ^/phpmyadmin/(libraries|templates|setup|sql|vendor|config\.inc\.php) { deny all; }
+    location ~ /\. { deny all; }
     location ~ \.php\$ {
-        include snippets/fastcgi-php.conf;
+        try_files \$uri =404;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME \$request_filename;
         fastcgi_pass unix:${socket};
+        fastcgi_read_timeout 900s;
     }
-    location ~ /\.(?!well-known) { deny all; }
-    location ~ ^/(libraries|templates|setup|sql|vendor|config\.inc\.php) { deny all; }
 }
 CONF
-ln -sf /etc/nginx/sites-available/neopanel-phpmyadmin /etc/nginx/sites-enabled/neopanel-phpmyadmin
 nginx -t
 systemctl reload nginx
-echo "phpMyAdmin ${PMA_VERSION} is available at http://<server-ip>:${port}/ (PHP socket: ${socket})"
+echo "phpMyAdmin ${PMA_VERSION} is available at http://<server-ip>:<panel-port>/phpmyadmin/ (PHP socket: ${socket})"
 echo "Sign in with the database user created in NeoPanel (root login is disabled)."
-echo "Consider restricting this port with a firewall or reaching it through an SSH tunnel."

@@ -654,10 +654,11 @@ def collect_metrics():
 
 def render_module(request: Request, module: str, *, error=None, success=None, one_time_secret=None, edit_file=None, php_edit=None):
     title, description, _ = MODULES[module]
-    phpmyadmin_installed = Path("/usr/share/phpmyadmin/index.php").is_file() if module == "databases" else False
-    # Use server IP from env instead of request.url.hostname to prevent Host-header injection.
-    _panel_host = os.environ.get("NEOPANEL_PUBLIC_IP", "").strip() or "127.0.0.1"
-    phpmyadmin_url = f"http://{_panel_host}:8081/" if phpmyadmin_installed else None
+    phpmyadmin_installed = (
+        Path("/etc/nginx/neopanel-locations/phpmyadmin.conf").is_file() if module == "databases" else False
+    )
+    # Same-origin relative path (served on the panel port) – no Host header involved.
+    phpmyadmin_url = "/phpmyadmin/" if phpmyadmin_installed else None
     data = get_module_data(module, request)
     data["forms"] = [
         {**form, "enabled": has_permission(request, f"{module}.{form['action']}")}
