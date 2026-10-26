@@ -44,9 +44,8 @@ done
     (( PORT >= 1 && PORT <= 65535 )) ||
     { echo "Cổng không hợp lệ." >&2; exit 2; }
 
-# Các cổng đã dùng: 80/443 (website), 8000 (uvicorn), 8081 (phpMyAdmin)
+# Các cổng đã dùng: 80/443 (website), 8000 (uvicorn)
 RESERVED_PORTS="80 443 8000"
-[[ "$PHPMYADMIN" -eq 1 ]] && RESERVED_PORTS+=" 8081"
 for p in $RESERVED_PORTS; do
     [[ "$PORT" -ne "$p" ]] || { echo "Cổng $PORT đã được dành riêng, hãy chọn cổng khác." >&2; exit 2; }
 done
@@ -257,6 +256,9 @@ EOF
 
 echo "==> Cấu hình Nginx cổng $PORT"
 
+# Snippet location bổ sung (vd. phpMyAdmin); thư mục trống vẫn hợp lệ
+mkdir -p /etc/nginx/neopanel-locations
+
 cat > /etc/nginx/sites-available/neopanel-panel <<EOF
 # managed-by-neopanel-panel
 server {
@@ -265,6 +267,8 @@ server {
     server_name _;
 
     client_max_body_size 128m;
+
+    include /etc/nginx/neopanel-locations/*.conf;
 
     location / {
         proxy_pass http://127.0.0.1:8000;
@@ -294,16 +298,12 @@ systemctl restart neopanel
 systemctl reload nginx
 
 if [[ "$PHPMYADMIN" -eq 1 ]]; then
-    echo "==> phpMyAdmin (cổng 8081)"
-    bash "$APP_DIR/ops/install-phpmyadmin.sh" 8081
+    echo "==> phpMyAdmin (http://$IP:$PORT/phpmyadmin/)"
+    bash "$APP_DIR/ops/install-phpmyadmin.sh"
 fi
 
 if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
     ufw allow "$PORT"/tcp
-
-    if [[ "$PHPMYADMIN" -eq 1 ]]; then
-        ufw allow 8081/tcp
-    fi
 fi
 
 echo
