@@ -45,7 +45,9 @@ def run(args, *, input_text=None, timeout=60):
         check=False,
     )
     if result.returncode:
-        raise OperationError("Lệnh hệ thống thất bại: " + Path(args[0]).name)
+        detail = (result.stderr or "").strip().splitlines()
+        suffix = f" ({detail[-1][:200]})" if detail else ""
+        raise OperationError("Lệnh hệ thống thất bại: " + Path(args[0]).name + suffix)
     return result.stdout.strip()
 
 
@@ -451,18 +453,25 @@ def database_create(data):
     if not isinstance(password, str) or not 8 <= len(password) <= 128 or any(not 32 <= ord(c) < 127 for c in password):
         raise OperationError("Mật khẩu database phải dài 8–128 ký tự ASCII hiển thị được.")
     # Identifiers are validated by IDENTIFIER_RE ([a-z][a-z0-9_]{0,47}) — safe to
-    # backtick-quote. Password is embedded as a hex literal and decoded server-side
-    # by UNHEX(), so no quoting or escaping is needed and injection is impossible.
-    password_hex = password.encode("utf-8").hex().upper()
+    # backtick-quote. IDENTIFIED BY only accepts a string literal (not UNHEX()),
+    # so escape it: password is printable ASCII only, so escaping backslash and
+    # single quote is sufficient to make injection impossible.
+    password_sql = password.replace("\\", "\\\\").replace("'", "\\'")
     # Wrap in a single batch so partial failures don't leave orphan DB/users.
     # MariaDB DDL statements cannot use BEGIN/ROLLBACK, but running them as one
     # atomic stdin batch ensures the process exits non-zero if any statement fails.
     sql = (
         f"CREATE DATABASE `{name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n"
-        f"CREATE USER '{username}'@'localhost' IDENTIFIED BY UNHEX('{password_hex}');\n"
+        f"CREATE USER '{username}'@'localhost' IDENTIFIED BY '{password_sql}';\n"
         f"GRANT ALL PRIVILEGES ON `{name}`.* TO '{username}'@'localhost';\n"
         "FLUSH PRIVILEGES;\n"
     )
+    exists = run(["/usr/bin/mariadb", "-N", "-B"], input_text=(
+        f"SELECT (SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='{name}')"
+        f" + (SELECT COUNT(*) FROM mysql.user WHERE User='{username}');\n"
+    ))
+    if exists.strip() != "0":
+        raise OperationError("Database hoặc user cùng tên đã tồn tại.")
     try:
         run(["/usr/bin/mariadb"], input_text=sql)
     except OperationError:
